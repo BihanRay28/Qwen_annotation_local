@@ -42,15 +42,30 @@ def parser():
         command.add_argument("--session", type=int, nargs="+", dest="sessions")
         command.add_argument("--window", type=int, nargs="+", dest="windows")
 
+    def window_pair(value):
+        try:
+            pair = tuple(map(int, value.split(":")))
+            if len(pair) != 2 or min(pair) < 1:
+                raise ValueError()
+            return pair
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError("Use SESSION:WINDOW, for example 15:88") from exc
+
     preflight = commands.add_parser("preflight", help="Read-only inventory and contract reconciliation")
     data_options(preflight)
     filters(preflight)
+    preflight.add_argument(
+        "--exclude-window", type=window_pair, action="append", default=[], dest="excluded_windows"
+    )
     preflight.add_argument("--output", type=Path)
     preflight.add_argument("--require-full-inventory", action="store_true")
 
     index = commands.add_parser("index", help="Build a content-hashed source index outside the dataset")
     data_options(index)
     filters(index)
+    index.add_argument(
+        "--exclude-window", type=window_pair, action="append", default=[], dest="excluded_windows"
+    )
     index.add_argument("--output", required=True, type=Path)
 
     download = commands.add_parser("download-model", help="Explicit online download of open model weights")
@@ -147,7 +162,7 @@ def dispatch(args):
         config = load_config(args.config)
         root = args.dataset_root.expanduser().resolve()
         if args.command == "preflight":
-            summary = preflight(root, config, args.sessions, args.windows)
+            summary = preflight(root, config, args.sessions, args.windows, args.excluded_windows)
             if args.output:
                 atomic_json(outside(args.output, root), summary)
             print_json(compact_summary(summary))
@@ -168,6 +183,7 @@ def dispatch(args):
             args.sessions,
             args.windows,
             progress=lambda s: print(s, file=sys.stderr, flush=True),
+            excluded_windows=args.excluded_windows,
         )
         print_json(compact_summary(summary))
         return 0

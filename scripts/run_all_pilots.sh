@@ -44,18 +44,24 @@ fi
 revision="$(git rev-parse HEAD)"
 git diff --quiet HEAD -- src scripts configs docker pyproject.toml || { echo "Commit or revert code changes before this reproducible pilot." >&2; exit 2; }
 if [[ -f "$suite/code-revision.txt" ]]; then
-  [[ "$(cat "$suite/code-revision.txt")" == "$revision" ]] || { echo "Code changed. Choose a new EASCCA_OUTPUTS directory." >&2; exit 2; }
-else
-  printf '%s\n' "$revision" > "$suite/code-revision.txt.tmp"
-  mv "$suite/code-revision.txt.tmp" "$suite/code-revision.txt"
+  if [[ "$(cat "$suite/code-revision.txt")" != "$revision" ]]; then
+    if compgen -G "$suite/pilot-*/manifest.json" >/dev/null; then
+      echo "Code changed after annotation began. Choose a new EASCCA_OUTPUTS directory." >&2; exit 2
+    fi
+    echo "Upgrading setup to the updated runner; no pilot annotations have started."
+  fi
 fi
+printf '%s\n' "$revision" > "$suite/code-revision.txt.tmp"
+mv "$suite/code-revision.txt.tmp" "$suite/code-revision.txt"
 step="container build"
-if [[ -f "$suite/image-id.txt" ]]; then
+if [[ -f "$suite/image-id.txt" && -f "$suite/image-revision.txt" && "$(cat "$suite/image-revision.txt")" == "$revision" ]]; then
   [[ "$("${docker_cmd[@]}" image inspect "$image" --format '{{.Id}}')" == "$(cat "$suite/image-id.txt")" ]] || { echo "Saved container image changed or disappeared. Restore it or use a new EASCCA_OUTPUTS directory." >&2; exit 2; }
 else
   "${docker_cmd[@]}" build --platform linux/arm64 -f docker/Dockerfile.spark -t "$image" .
   "${docker_cmd[@]}" image inspect "$image" --format '{{.Id}}' > "$suite/image-id.txt.tmp"
   mv "$suite/image-id.txt.tmp" "$suite/image-id.txt"
+  printf '%s\n' "$revision" > "$suite/image-revision.txt.tmp"
+  mv "$suite/image-revision.txt.tmp" "$suite/image-revision.txt"
 fi
 [[ "$("${docker_cmd[@]}" image inspect "$image" --format '{{.Architecture}}')" == "arm64" ]]
 "${docker_cmd[@]}" image inspect "$image" > "$suite/annotation-image.json"
@@ -80,9 +86,23 @@ cfg="$root/config.json"
 step="Spark CUDA/BF16/SDPA preflight"
 py /workspace/scripts/spark_preflight.py --output "$root/spark-environment.json"
 step="dataset reconciliation and indexing"
-qwen preflight --dataset-root /dataset --config "$cfg" --output "$root/preflight.json"
+if qwen preflight --dataset-root /dataset --config "$cfg" --output "$root/preflight-full.json"; then
+  :
+else
+  preflight_code=$?
+  [[ "$preflight_code" == 2 ]] || exit "$preflight_code"
+fi
+scope_exclusions="$(py /workspace/scripts/pilot_suite_state.py scope --report "$root/preflight-full.json" --output "$root/pilot-scope.json")"
+scope_flags=()
+while IFS= read -r exclusion; do
+  if [[ -n "$exclusion" ]]; then
+    echo "Pilot index exclusion: $exclusion (unfinished crop processing; source unchanged)"
+    scope_flags+=(--exclude-window "$exclusion")
+  fi
+done <<< "$scope_exclusions"
+qwen preflight --dataset-root /dataset --config "$cfg" --output "$root/preflight.json" "${scope_flags[@]}"
 if [[ ! -f "$suite/index.sqlite" ]]; then
-  qwen index --dataset-root /dataset --config "$cfg" --output "$root/index.sqlite"
+  qwen index --dataset-root /dataset --config "$cfg" --output "$root/index.sqlite" "${scope_flags[@]}"
 else
   qwen validate --dataset-root /dataset --index "$root/index.sqlite"
 fi

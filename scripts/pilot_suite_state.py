@@ -6,6 +6,7 @@ from pathlib import Path
 
 from cue_annotation.config import load_config
 from cue_annotation.persistence import event_records, inspect_run, journal_events, key
+from cue_annotation.pilot_scope import pilot_scope
 from cue_annotation.qwen_backend import model_identity, resolve_cached_model
 from cue_annotation.util import atomic_json, digest
 
@@ -42,10 +43,17 @@ def main():
     export = commands.add_parser("check-export")
     export.add_argument("--run-dir", type=Path, required=True)
     export.add_argument("--output", type=Path, required=True)
+    scope = commands.add_parser("scope")
+    scope.add_argument("--report", type=Path, required=True)
+    scope.add_argument("--output", type=Path, required=True)
     finish = commands.add_parser("finish")
     finish.add_argument("--root", type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "model":
+    if args.command == "scope":
+        scope = pilot_scope(args.report, args.output)
+        for item in scope["exclusions"]:
+            print(f"{item['session']}:{item['window']}")
+    elif args.command == "model":
         config = load_config(args.config)
         if args.output.exists():
             saved = json.loads(args.output.read_text())
@@ -86,6 +94,7 @@ def main():
                 "engineering_complete": True,
                 "quality_reviewed": False,
                 "plan_fingerprint": plan["plan_fingerprint"],
+                "pilot_scope": json.loads((args.root / "pilot-scope.json").read_text()),
                 "stages": summaries,
             },
         )

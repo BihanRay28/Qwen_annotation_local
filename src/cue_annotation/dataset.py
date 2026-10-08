@@ -61,7 +61,7 @@ def image_files(root: Path) -> dict[int, Path]:
     return dict(sorted(result.items()))
 
 
-def walk_windows(root: Path, config: Config, sessions=None, windows=None):
+def walk_windows(root: Path, config: Config, sessions=None, windows=None, excluded_windows=None):
     if not root.is_dir():
         raise FileNotFoundError(f"Dataset root is not a directory: {root}")
     for session, session_path in numeric_dirs(root, "session"):
@@ -72,14 +72,19 @@ def walk_windows(root: Path, config: Config, sessions=None, windows=None):
         for window, path in numeric_dirs(session_path, "window"):
             if windows and window not in windows:
                 continue
+            if (session, window) in {tuple(pair) for pair in (excluded_windows or [])}:
+                continue
             if window < 1:
                 raise ValueError(f"Window IDs begin at 1: {path}")
             start = config.session_start_frames[str(session)] + (window - 1) * config.window_frames
             yield session, window, start, path
 
 
-def preflight(root: Path, config: Config, sessions=None, windows=None) -> dict:
+def preflight(root: Path, config: Config, sessions=None, windows=None, excluded_windows=None) -> dict:
     root = root.expanduser().resolve()
+    excluded_windows = sorted({tuple(pair) for pair in (excluded_windows or [])})
+    if any(len(pair) != 2 or any(type(n) is not int or n < 1 for n in pair) for pair in excluded_windows):
+        raise ValueError("Excluded windows require positive integer (session, window) pairs")
     result = {
         "root": str(root),
         "fps": config.fps,
@@ -92,9 +97,10 @@ def preflight(root: Path, config: Config, sessions=None, windows=None) -> dict:
         "missing_crop_positions": 0,
         "issues": [],
         "sessions": {},
+        "excluded_windows": [{"session": s, "window": w} for s, w in excluded_windows],
     }
     metadata = hashlib.sha256()
-    for session, window, start, path in walk_windows(root, config, sessions, windows):
+    for session, window, start, path in walk_windows(root, config, sessions, windows, excluded_windows):
         expected = set(range(start, start + config.window_frames))
         global_files = image_files(path / "global_frames")
         crop_root = path / "cropped_frames_per_student"
@@ -160,13 +166,19 @@ def preflight(root: Path, config: Config, sessions=None, windows=None) -> dict:
 
 
 def build_index(
-    root: Path, destination: Path, config: Config, sessions=None, windows=None, progress=None
+    root: Path,
+    destination: Path,
+    config: Config,
+    sessions=None,
+    windows=None,
+    progress=None,
+    excluded_windows=None,
 ) -> dict:
     root = root.expanduser().resolve()
     destination = outside(destination, root)
     if destination.exists():
         raise FileExistsError(f"Index exists; choose a new index path: {destination}")
-    summary = preflight(root, config, sessions, windows)
+    summary = preflight(root, config, sessions, windows, excluded_windows)
     fatal = [
         i
         for i in summary["issues"]
@@ -189,7 +201,7 @@ def build_index(
               path TEXT UNIQUE NOT NULL, sha256 TEXT NOT NULL, size INTEGER, mtime_ns INTEGER,
               PRIMARY KEY(session,window,track,frame));
         """)
-        for session, window, start, path in walk_windows(root, config, sessions, windows):
+        for session, window, start, path in walk_windows(root, config, sessions, windows, excluded_windows):
             conn.execute("INSERT INTO windows VALUES (?,?,?)", (session, window, start))
             tracks = numeric_dirs(path / "cropped_frames_per_student", "track_")
             fingerprint.update(canonical([session, window, start, [t for t, _ in tracks]]).encode())
@@ -217,6 +229,10 @@ def build_index(
         summary["index_version"] = INDEX_VERSION
         summary["session_start_frames"] = config.session_start_frames
         summary["selection"] = {"sessions": sorted(sessions or []), "windows": sorted(windows or [])}
+        if excluded_windows:
+            summary["selection"]["excluded_windows"] = [
+                list(pair) for pair in sorted({tuple(p) for p in excluded_windows})
+            ]
         conn.execute("INSERT INTO meta VALUES ('manifest',?)", (canonical(summary),))
         conn.commit()
         conn.close()
@@ -296,7 +312,9 @@ class DatasetIndex:
         if self.manifest["session_start_frames"] != config.session_start_frames:
             raise ValueError("Index and configuration disagree about source frame starts")
         selection = self.manifest["selection"]
-        current = preflight(self.root, config, selection["sessions"], selection["windows"])
+        current = preflight(
+            self.root, config, selection["sessions"], selection["windows"], selection.get("excluded_windows")
+        )
         if current["metadata_fingerprint"] != self.manifest["metadata_fingerprint"]:
             raise ValueError("Dataset inventory changed; build a new index and start a new run")
 

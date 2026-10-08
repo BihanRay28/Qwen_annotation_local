@@ -42,6 +42,11 @@ elif command == "/workspace/scripts/pilot_suite_state.py":
         print("/hf-cache/snapshots/fixture")
     elif mode == "check-export":
         assert (host(value("--output")) / "review.html").is_file()
+    elif mode == "scope":
+        exclusions = [{"session": 15, "window": 88, "reason": "crop_root_not_finalised"}] if os.environ.get("UNFINISHED_WINDOW") else []
+        write(host(value("--output")), {"exclusions": exclusions})
+        if exclusions:
+            print("15:88")
     elif mode == "finish":
         assert all((root / ("pilot-" + s) / "complete.json").exists() for s in ["one", "five", "twenty"])
         write(root / "suite-summary.json", {"engineering_complete": True, "quality_reviewed": False})
@@ -53,6 +58,8 @@ elif command == "/workspace/scripts/create_approval_template.py":
     write(host(value("--output")), {"quality_reviewed": False, "resources_feasible": False})
 elif command == "preflight":
     write(host(value("--output")), {"windows": 20})
+    if os.environ.get("UNFINISHED_WINDOW") and "preflight-full.json" in value("--output"):
+        sys.exit(2)
 elif command == "index":
     host(value("--output")).write_text("synthetic index boundary")
 elif command == "plan-pilots":
@@ -66,6 +73,8 @@ elif command == "run":
         sys.exit(2)
     run = host(value("--run-dir"))
     run.mkdir(parents=True, exist_ok=True)
+    if "--dry-run" not in a:
+        write(run / "manifest.json", {"fixture": True})
     if "--dry-run" not in a and "--max-chunks" not in a:
         write(run / "complete.json", {"complete": True})
 elif command == "validate":
@@ -96,7 +105,7 @@ class SequentialRunnerTests(unittest.TestCase):
         for name, body in {
             "docker": f"#!{sys.executable}\n" + DOCKER_FIXTURE,
             "uname": "#!/bin/sh\necho aarch64\n",
-            "git": '#!/bin/sh\nif [ "$1" = rev-parse ]; then echo fixture-revision; fi\nexit 0\n',
+            "git": '#!/bin/sh\nif [ "$1" = rev-parse ]; then echo "${FIXTURE_REVISION:-fixture-revision}"; fi\nexit 0\n',
         }.items():
             path = binaries / name
             path.write_text(body)
@@ -112,6 +121,8 @@ class SequentialRunnerTests(unittest.TestCase):
         env.pop("EASCCA_CONFIG", None)
         env.pop("EASCCA_TRACKS_PER_WINDOW", None)
         env.pop("FAIL_STAGE", None)
+        env.pop("UNFINISHED_WINDOW", None)
+        env.pop("FIXTURE_REVISION", None)
         return repo, env, base / "outputs/automatic-pilots"
 
     def execute(self, repo, env):
@@ -169,3 +180,20 @@ class SequentialRunnerTests(unittest.TestCase):
             result = self.execute(repo, env)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertTrue((root / "suite-summary.json").is_file())
+
+    def test_upgrade_before_annotation_and_explicit_partial_window_scope(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, env, root = self.prepare(Path(temporary))
+            root.mkdir(parents=True)
+            (root / "code-revision.txt").write_text("old-revision\n")
+            (root / "image-id.txt").write_text("sha256:old-image\n")
+            result = self.execute(repo, {**env, "UNFINISHED_WINDOW": "1"})
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("Upgrading setup", result.stdout)
+            self.assertIn("Pilot index exclusion: 15:88", result.stdout)
+            calls = [json.loads(line) for line in (root / "fixture-calls.jsonl").read_text().splitlines()]
+            index_calls = [call for call in calls if "index" in call]
+            self.assertEqual(index_calls[0][-2:], ["--exclude-window", "15:88"])
+            result = self.execute(repo, {**env, "FIXTURE_REVISION": "changed-after-pilots"})
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Code changed after annotation began", result.stdout + result.stderr)

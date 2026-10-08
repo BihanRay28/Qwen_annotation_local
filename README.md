@@ -20,6 +20,8 @@ The runner builds the container, uses `sudo` if Docker requires it, checks the G
 
 Automatic selection spreads sessions, window positions, crop sizes and missing-frame rates. It does not establish behavioural diversity or cue accuracy; the operator must confirm the proposal's diversity categories and review quality. It requires twenty usable classroom windows, and does not silently substitute a smaller pilot. Default paths are the same as the helper below. All results go to `~/Desktop/eascca-cue-runs/automatic-pilots`.
 
+Unfinished crop windows are explicitly excluded from this engineering pilot index and recorded in `pilot-scope.json`; the source dataset stays untouched. Full inventory and scoped pilot reports are both retained. Out-of-range frames still stop processing, and unfinished windows must be repaired before including them in bulk annotation.
+
 Clone onto the Spark and build the proposed ARM64 GPU container:
 
 ```bash
