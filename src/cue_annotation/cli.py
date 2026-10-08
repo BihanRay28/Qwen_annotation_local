@@ -69,6 +69,16 @@ def parser():
     run.add_argument("--dry-run", action="store_true")
     run.add_argument("--stage", choices=["pilot", "bulk"], default="pilot")
     run.add_argument("--pilot-approval", type=Path)
+    run.add_argument("--units-file", type=Path, help="Frozen plan from plan-pilots")
+    run.add_argument("--pilot-stage", choices=["one", "five", "twenty"])
+
+    pilots = commands.add_parser(
+        "plan-pilots", help="Freeze automatic engineering selections for all three pilots"
+    )
+    data_options(pilots)
+    pilots.add_argument("--index", required=True, type=Path)
+    pilots.add_argument("--output", required=True, type=Path)
+    pilots.add_argument("--tracks-per-window", type=int, default=3)
 
     units = commands.add_parser("list-units", help="List actual indexed track-window IDs in numeric order")
     data_options(units)
@@ -168,13 +178,54 @@ def dispatch(args):
             download_model(load_config(args.config), args.cache_dir.expanduser() if args.cache_dir else None)
         )
         return 0
-    if args.command in {"run", "list-units"}:
+    if args.command in {"run", "list-units", "plan-pilots"}:
         from .dataset import DatasetIndex
 
         config = load_config(args.config)
         index = DatasetIndex(args.index, args.dataset_root)
         try:
+            if args.command == "plan-pilots":
+                from .pilots import plan_pilots
+
+                plan = plan_pilots(
+                    index,
+                    config,
+                    args.output,
+                    args.tracks_per_window,
+                    progress=lambda s: print(s, file=sys.stderr, flush=True),
+                )
+                print_json(
+                    {
+                        "selection_file": str(args.output),
+                        "plan_fingerprint": plan["plan_fingerprint"],
+                        "stages": {
+                            k: {
+                                "track_windows": len(v["units"]),
+                                "classroom_windows": v["classroom_windows"],
+                                "expected_frames": v["expected_frames"],
+                            }
+                            for k, v in plan["stages"].items()
+                        },
+                    }
+                )
+                return 0
             units = index.units(args.sessions, args.windows, getattr(args, "tracks", None))
+            if args.command == "run" and (args.units_file or args.pilot_stage):
+                if not args.units_file or not args.pilot_stage:
+                    raise ValueError("Provide both --units-file and --pilot-stage")
+                if (
+                    args.sessions
+                    or args.windows
+                    or args.tracks
+                    or args.max_track_windows
+                    or args.stage != "pilot"
+                ):
+                    raise ValueError(
+                        "Frozen pilot selections cannot be combined with other selection flags or bulk"
+                    )
+                from .pilots import selected_units
+
+                units = selected_units(args.units_file, args.pilot_stage, index, config)
             if not units:
                 raise ValueError("No indexed track-windows match the selection")
             if args.command == "list-units":
@@ -197,13 +248,9 @@ def dispatch(args):
                     "Pilot scope is at most 20 classroom windows; select units or use reviewed --stage bulk"
                 )
             if args.model_dir is None:
-                try:
-                    from huggingface_hub import snapshot_download
-                except ImportError as exc:
-                    raise RuntimeError("Install [vlm], download weights, then supply --model-dir") from exc
-                model_dir = Path(
-                    snapshot_download(config.model_id, revision=config.model_revision, local_files_only=True)
-                )
+                from .qwen_backend import resolve_cached_model
+
+                model_dir = resolve_cached_model(config)
             else:
                 model_dir = args.model_dir.expanduser().resolve()
             if args.stage == "bulk":

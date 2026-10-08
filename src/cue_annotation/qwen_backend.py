@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -28,8 +29,34 @@ def download_model(config, cache_dir: Path | None = None) -> dict:
         allow_patterns=["*.json", "*.safetensors", "*.txt", "*.model", "*.tiktoken"],
     )
     identity = model_identity(Path(path), config)
+    identity["requested_revision"] = config.model_revision
     atomic_json(Path(path).parent.parent / "eascca_download_manifest.json", identity)
     return identity
+
+
+def resolve_cached_model(config):
+    """Use the downloaded immutable snapshot even when no mutable main ref was cached."""
+    try:
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.constants import HF_HUB_CACHE
+    except ImportError as exc:
+        raise RuntimeError("Install [vlm], download weights, then supply --model-dir") from exc
+    repository = Path(HF_HUB_CACHE) / ("models--" + config.model_id.replace("/", "--"))
+    manifest_path = repository / "eascca_download_manifest.json"
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if (
+            manifest.get("model_id") == config.model_id
+            and manifest.get("requested_revision") == config.model_revision
+        ):
+            revision = manifest.get("resolved_revision", "")
+            if not isinstance(revision, str) or not re.fullmatch(r"[a-f0-9]{40,64}", revision):
+                raise ValueError("Invalid cached model revision")
+            snapshot = repository / "snapshots" / revision
+            if not snapshot.is_dir():
+                raise FileNotFoundError("Downloaded model snapshot is missing; rerun download-model")
+            return snapshot
+    return Path(snapshot_download(config.model_id, revision=config.model_revision, local_files_only=True))
 
 
 def model_identity(model_dir: Path, config) -> dict:

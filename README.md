@@ -8,6 +8,18 @@ The source dataset is read-only. Images, weights, indices, journals, exports and
 
 ## Spark quick start
 
+For a single sequential setup and all three engineering pilots, after cloning run:
+
+```bash
+cd ~/Desktop/Qwen_annotation_local
+git pull --ff-only
+bash scripts/run_all_pilots.sh
+```
+
+The runner builds the container, uses `sudo` if Docker requires it, checks the GPU, indexes the dataset, freezes explicit selections, downloads and pins the 7B checkpoint, then runs one track-window (including save/resume), five tracks in distinct windows, and up to three tracks in each of twenty classroom windows. Every selected track processes all 250 positions. It validates each stage, exports every position for visual review, captures the environment and creates an **unapproved** review template. It stops on errors; repeating the command resumes the same selections and checkpoint. See [the sequential runner](docs/sequential_pilots.md).
+
+Automatic selection spreads sessions, window positions, crop sizes and missing-frame rates. It does not establish behavioural diversity or cue accuracy; the operator must confirm the proposal's diversity categories and review quality. It requires twenty usable classroom windows, and does not silently substitute a smaller pilot. Default paths are the same as the helper below. All results go to `~/Desktop/eascca-cue-runs/automatic-pilots`.
+
 Clone onto the Spark and build the proposed ARM64 GPU container:
 
 ```bash

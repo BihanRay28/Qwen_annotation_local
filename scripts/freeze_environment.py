@@ -5,6 +5,7 @@ import json
 import platform
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from cue_annotation.persistence import inspect_run
@@ -26,20 +27,24 @@ if not torch.cuda.is_available():
 output = outside(args.output_dir, Path(manifest["dataset_root"]))
 if output.exists():
     raise SystemExit("Output directory exists; use a new path")
-output.mkdir(parents=True)
+output.parent.mkdir(parents=True, exist_ok=True)
 pins = subprocess.run(
     [sys.executable, "-m", "pip", "freeze", "--all"], capture_output=True, text=True, check=True
 )
-(output / "requirements.spark.lock.txt").write_text(pins.stdout, encoding="utf-8")
-atomic_json(
-    output / "validated_environment.json",
-    {
-        "pilot_run_fingerprint": status["run_fingerprint"],
-        "model": manifest["model"],
-        "packages": manifest["environment"],
-        "gpu": torch.cuda.get_device_name(0),
-        "cuda": torch.version.cuda,
-        "note": "Engineering smoke test completed; cue quality requires independent review",
-    },
-)
+with tempfile.TemporaryDirectory(prefix="eascca-environment-", dir=output.parent) as temporary:
+    staged = Path(temporary) / "environment"
+    staged.mkdir()
+    (staged / "requirements.spark.lock.txt").write_text(pins.stdout, encoding="utf-8")
+    atomic_json(
+        staged / "validated_environment.json",
+        {
+            "pilot_run_fingerprint": status["run_fingerprint"],
+            "model": manifest["model"],
+            "packages": manifest["environment"],
+            "gpu": torch.cuda.get_device_name(0),
+            "cuda": torch.version.cuda,
+            "note": "Engineering smoke test completed; cue quality requires independent review",
+        },
+    )
+    staged.rename(output)
 print(output)
