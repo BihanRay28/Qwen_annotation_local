@@ -1,0 +1,14 @@
+ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:25.09-py3
+FROM ${BASE_IMAGE}
+WORKDIR /workspace
+COPY pyproject.toml README.md ./
+COPY src/ src/
+COPY configs/ configs/
+COPY scripts/ scripts/
+COPY docs/ docs/
+COPY tests/ tests/
+# Keep NVIDIA's installed PyTorch/CUDA stack. Never replace it with a generic wheel.
+RUN python -m pip install --no-cache-dir -e '.[vlm]' && python -m pip check
+ENV HF_HOME=/hf-cache HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 PYTHONUNBUFFERED=1
+ENTRYPOINT ["eascca-cues"]
+CMD ["--help"]
