@@ -1,0 +1,16 @@
+# Observable cue annotation protocol
+
+The ontology in `src/cue_annotation/ontology.py` defines sixteen simultaneous cues. A frame records each cue explicitly as `present`, `not_observed` or `unknown`. No engagement score, emotion, cognitive label, student identity or educational interpretation is emitted.
+
+One primary chunk contains 25 positions, with up to five earlier and five later context positions in the same window. At 25 FPS this supplies one second of primary coverage and up to 0.2 seconds of context on either side. Context can clarify short motion, but cannot establish a longer interaction or a feature hidden on the primary frame. Only primary positions own final records. Memory, input-token or output-length pressure recursively splits that ownership range without temporal sampling.
+
+Each multimodal message labels its absolute source frame and whether it is primary or context-only, then supplies the tracked crop and corresponding global image. A temporary red outline is drawn only for an accepted target match. Source images are never altered. Localisation uses coarse normalised matching, a native-resolution refinement, distinct alternative matches and previous accepted location information. The score 0.90 and margin 0.05 are provisional pilot defaults, not validated accuracies.
+
+The crop supports target identity in a call. Failed localisation makes relational cues unknown. If the crop is absent, all cues remain unknown even if a global frame exists; this implementation deliberately requires crop evidence for the target and does not invent a global-only identity. Body, head, face, eyes and hand visibility independently gate cue eligibility. Partial visibility is recorded but most detailed cues require the relevant feature to be fully visible. This conservative rule can be adjusted only after review, using a new configuration/protocol/run.
+
+`LOOK_OTHER_UNKNOWN` means a visible orientation whose target is outside or cannot be assigned to the named categories. It does not stand for unresolvable gaze. Eye closure needs resolvable eyes; a phone needs an identifiable object. Raised hands do not establish intention to answer. Apparent conversation is visible interaction, not confirmed speech. Collaboration requires visible joint actions with shared material/task. Head-down posture alone does not establish writing. Unresolved object relevance is unknown.
+
+The model emits compact present/unknown lists and visibility. The host injects source identifiers and hashes, checks exact primary coverage, rejects duplicate/out-of-chunk evidence, expands every cue state and gates ineligible states to unknown with review flags. A present cue needs factual evidence referencing its current primary frame. Omitted cues become negatives only after a valid response and visibility checks. Malformed JSON receives one correction retry with the same imagery. Truncated generation triggers splitting. Failed calls remain incomplete; they never turn into valid negative records.
+
+Model confidence is an uncalibrated low/medium/high category. All tracks remain `unreviewed` for eligibility. Each inference response, localisation outcome, retry and split reason is retained under local run storage for human inspection.
+
