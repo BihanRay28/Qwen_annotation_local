@@ -1,0 +1,20 @@
+{
+  "model_id": "Qwen/Qwen2.5-VL-7B-Instruct",
+  "model_revision": "main",
+  "primary_frames": 1,
+  "context_frames": 2,
+  "batch_size": 1,
+  "num_workers": 0,
+  "dtype": "bfloat16",
+  "attention": "sdpa",
+  "min_pixels": 3136,
+  "global_max_pixels": 802816,
+  "crop_max_pixels": 401408,
+  "input_token_budget": 57344,
+  "max_new_tokens": 2048,
+  "context_budget": 128000,
+  "localisation_score": 0.90,
+  "localisation_margin": 0.05,
+  "localisation_scales": [0.75, 1.0, 1.25],
+  "global_cache_frames": 40
+}

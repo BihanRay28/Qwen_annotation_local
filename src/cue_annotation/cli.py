@@ -84,6 +84,14 @@ def parser():
     run.add_argument("--dry-run", action="store_true")
     run.add_argument("--stage", choices=["pilot", "bulk"], default="pilot")
     run.add_argument("--pilot-approval", type=Path)
+    run.add_argument(
+        "--allow-unreviewed-bulk",
+        action="store_true",
+        help="Explicitly run bulk machine proposals without claiming pilot quality approval",
+    )
+    run.add_argument(
+        "--full-inventory", type=Path, help="Full preflight report for indexed single-JSON snapshots"
+    )
     run.add_argument("--units-file", type=Path, help="Frozen plan from plan-pilots")
     run.add_argument("--pilot-stage", choices=["one", "five", "twenty"])
 
@@ -269,10 +277,29 @@ def dispatch(args):
                 model_dir = resolve_cached_model(config)
             else:
                 model_dir = args.model_dir.expanduser().resolve()
-            if args.stage == "bulk":
+            if args.allow_unreviewed_bulk and args.stage != "bulk":
+                raise ValueError("--allow-unreviewed-bulk requires --stage bulk")
+            inventory = None
+            if args.full_inventory:
+                if args.stage != "bulk" or units != index.units():
+                    raise ValueError("Single-JSON full inventory requires bulk scope with every indexed unit")
+                inventory = json.loads(args.full_inventory.read_text(encoding="utf-8"))
+                from .dataset import preflight
+
+                if inventory != preflight(index.root, config):
+                    raise ValueError("Full inventory changed; regenerate preflight before annotation")
+            if args.stage == "bulk" and not args.allow_unreviewed_bulk:
                 from .qwen_backend import model_identity
 
                 verify_approval(args.pilot_approval, index, config, model_identity(model_dir, config))
+            print(
+                f"Selected {len(units)} track-windows across "
+                f"{len({u.session for u in units})} sessions: "
+                f"{len(units) * config.window_frames} expected frame positions. "
+                "Accepted records resume from the journal; machine cue quality remains unreviewed.",
+                file=sys.stderr,
+                flush=True,
+            )
             summary = run_annotation(
                 index,
                 config,
@@ -281,6 +308,7 @@ def dispatch(args):
                 model_dir,
                 args.max_chunks,
                 progress=lambda s: print(s, file=sys.stderr, flush=True),
+                inventory=inventory,
             )
             print_json(summary)
             return 2 if summary.get("failed_chunks_this_invocation", 0) else 0

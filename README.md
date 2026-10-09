@@ -4,9 +4,23 @@ This package implements the EASCCA local Qwen cue annotation proposal and its Ma
 
 The outputs describe observable cues with evidence, visibility, uncertainty and review flags. They do not assign engagement, emotion, attention or cognitive labels. Tracking IDs remain session-local and every detected track is retained for human eligibility review. A later 3B comparison can use the same interface and reviewed cases.
 
-The source dataset is read-only. Images, weights, indices, journals, exports and caches stay outside this repository. The independent Pass 2 workflow and existing preprocessing are not modified.
+Source images and preprocessing are read-only. The full runner publishes only its generated `labels.json` into the dataset root. Images, weights, indices, journals, exports and caches stay outside this repository. The independent Pass 2 workflow and existing preprocessing are not modified.
+
+## Full dataset in one command
+
+Run this in the Spark terminal:
+
+```bash
+cd ~/Desktop/Qwen_annotation_local && git pull --ff-only origin main && EASCCA_DATASET="$HOME/Desktop/preprocessed_dataset" EASCCA_OUTPUTS="$HOME/Desktop/eascca-cue-runs" bash scripts/run_full_dataset.sh
+```
+
+This archives old generated pilot results on its first invocation, retains compatible indexing and cached weights, sets up the container, and attempts every available session, window, track and frame. The result is **`~/Desktop/preprocessed_dataset/labels.json`**, indexed by session → window → track → absolute source frame. One primary frame per response reduces multi-frame copying. All sixteen cue states and their evidence/provenance are retained. Repeating the command resumes; deliberate resets use `EASCCA_RESET=1` and preserve the previous run in an external archive.
+
+The source images remain mounted read-only. The JSON is updated atomically, periodically and on exit; journals and raw audits stay outside the dataset. Unfinished source windows remain explicitly unlabelled in the JSON, and failed model outputs do not become fabricated labels. If any such gaps remain, the command reports incomplete coverage after available work. The full run can cover millions of positions and take substantially longer than the pilots. Machine accuracy still requires review. See [full-dataset execution](docs/full_dataset.md).
 
 ## Spark quick start
+
+The following is the optional staged pilot/review workflow. Use the full-dataset command above for all-session execution.
 
 For a single sequential setup and all three engineering pilots, after cloning run:
 

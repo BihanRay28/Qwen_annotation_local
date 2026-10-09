@@ -102,7 +102,7 @@ def task_iterator(units, config):
 
 
 class Runner:
-    def __init__(self, index, config, store, backend, localiser, progress=None):
+    def __init__(self, index, config, store, backend, localiser, progress=None, snapshot=None):
         self.index, self.config, self.store = index, config, store
         self.backend, self.localiser = backend, localiser
         self.images = ImageCache(index.root, config.global_cache_frames)
@@ -111,6 +111,7 @@ class Runner:
         self.failures = 0
         self.committed = 0
         self.stop_after = None
+        self.snapshot = snapshot
 
     def audit(self, unit, chunk, payload):
         self.attempts += 1
@@ -206,6 +207,8 @@ class Runner:
                 raise ValueError("Incomplete primary ownership; chunk cannot be committed")
             chunk_id = f"{unit.key}/{chunk.start}-{chunk.stop}"
             self.store.commit(chunk_id, records)
+            if self.snapshot is not None:
+                self.snapshot.add(records)
             self.committed += 1
             metrics = {
                 "chunk": chunk_id,
@@ -235,6 +238,10 @@ class Runner:
             raise
         except PlaceholderEvidenceError as exc:
             self.audit(unit, chunk, {"type": "ungrounded_output", "reason": str(exc)})
+            if self.snapshot is not None:
+                self.failures += 1
+                self.progress(f"Rejected ungrounded frame {unit.key}/{chunk.start}: {exc}")
+                return
             raise RuntimeError(
                 "Repeated placeholder evidence after a correction retry; stopping without accepting invented observations"
             ) from exc
@@ -268,21 +275,32 @@ def contiguous(frames):
     yield start, previous + 1
 
 
-def run_annotation(index, config, units, run_dir: Path, model_dir: Path, max_chunks=None, progress=None):
+def run_annotation(
+    index, config, units, run_dir: Path, model_dir: Path, max_chunks=None, progress=None, inventory=None
+):
     run_dir = outside(run_dir, index.root)
     index.verify_metadata(config)
     identity = model_identity(model_dir, config)
     manifest = run_manifest(index, config, units, identity)
     with writer_lock(run_dir / ".writer.lock"):
         store = RunStore(run_dir, manifest)
+        snapshot = None
         try:
+            if inventory is not None:
+                from .labels import LabelsSnapshot
+
+                snapshot = LabelsSnapshot(run_dir, manifest, inventory)
             if store.counts()["complete"]:
                 return store.counts()
             backend = QwenBackend(config, model_dir)
-            runner = Runner(index, config, store, backend, Localiser(config), progress)
+            runner = Runner(index, config, store, backend, Localiser(config), progress, snapshot)
             return runner.run(units, max_chunks)
         finally:
-            store.close()
+            try:
+                if snapshot is not None:
+                    snapshot.close()
+            finally:
+                store.close()
 
 
 def dry_run(index, config, units, run_dir: Path) -> dict:

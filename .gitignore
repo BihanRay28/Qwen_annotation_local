@@ -34,4 +34,6 @@ hf-cache/
 tmp/
 secrets/
 credentials*
-
+labels.json
+labels.py
+!src/cue_annotation/labels.py
