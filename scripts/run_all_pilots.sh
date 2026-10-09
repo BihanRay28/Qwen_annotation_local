@@ -46,9 +46,10 @@ git diff --quiet HEAD -- src scripts configs docker pyproject.toml || { echo "Co
 if [[ -f "$suite/code-revision.txt" ]]; then
   if [[ "$(cat "$suite/code-revision.txt")" != "$revision" ]]; then
     if compgen -G "$suite/pilot-*/manifest.json" >/dev/null; then
-      echo "Code changed after annotation began. Choose a new EASCCA_OUTPUTS directory." >&2; exit 2
+      step="preserving failed zero-record pilots for the updated protocol"
+      python3 scripts/archive_empty_pilots.py --suite "$suite" --previous-revision "$(cat "$suite/code-revision.txt")"
     fi
-    echo "Upgrading setup to the updated runner; no pilot annotations have started."
+    echo "Upgrading setup to the updated runner; no accepted pilot annotations are being reused."
   fi
 fi
 printf '%s\n' "$revision" > "$suite/code-revision.txt.tmp"

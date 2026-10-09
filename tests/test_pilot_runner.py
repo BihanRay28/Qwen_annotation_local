@@ -77,6 +77,7 @@ elif command == "run":
         write(run / "manifest.json", {"fixture": True})
     if "--dry-run" not in a and "--max-chunks" not in a:
         write(run / "complete.json", {"complete": True})
+        write(run / "journal.jsonl", {"synthetic_committed_records": True})
 elif command == "validate":
     if "--require-complete" in a:
         assert (host(value("--run-dir")) / "complete.json").is_file()
@@ -97,6 +98,7 @@ class SequentialRunnerTests(unittest.TestCase):
         (repo / "configs").mkdir()
         source = Path(__file__).resolve().parents[1]
         shutil.copy(source / "scripts/run_all_pilots.sh", repo / "scripts/run_all_pilots.sh")
+        shutil.copy(source / "scripts/archive_empty_pilots.py", repo / "scripts/archive_empty_pilots.py")
         shutil.copy(source / "configs/all_frames_7b.json", repo / "configs/all_frames_7b.json")
         dataset = base / "dataset"
         dataset.mkdir()
@@ -197,3 +199,19 @@ class SequentialRunnerTests(unittest.TestCase):
             result = self.execute(repo, {**env, "FIXTURE_REVISION": "changed-after-pilots"})
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Code changed after annotation began", result.stdout + result.stderr)
+
+    def test_zero_record_failed_pilot_upgrade_keeps_audits_and_index(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            repo, env, root = self.prepare(Path(temporary))
+            failed = root / "pilot-one"
+            (failed / "audit").mkdir(parents=True)
+            (failed / "manifest.json").write_text("{}")
+            (failed / "audit/rejected.json").write_text('{"raw_response":"synthetic rejected output"}')
+            (root / "code-revision.txt").write_text("old-revision\n")
+            (root / "index.sqlite").write_text("synthetic reusable index")
+            result = self.execute(repo, env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            archived = list((root / "failed-empty-pilots").glob("*/pilot-one/audit/rejected.json"))
+            self.assertEqual(len(archived), 1)
+            self.assertIn("synthetic rejected output", archived[0].read_text())
+            self.assertEqual((root / "index.sqlite").read_text(), "synthetic reusable index")

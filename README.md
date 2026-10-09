@@ -22,6 +22,8 @@ Automatic selection spreads sessions, window positions, crop sizes and missing-f
 
 Unfinished crop windows are explicitly excluded from this engineering pilot index and recorded in `pilot-scope.json`; the source dataset stays untouched. Full inventory and scoped pilot reports are both retained. Out-of-range frames still stop processing, and unfinished windows must be repaired before including them in bulk annotation.
 
+If an older protocol failed with zero accepted records, pulling an update and rerunning preserves those failed run folders under `failed-empty-pilots` and restarts with the revised protocol while retaining the index, selections and cached weights. Any accepted records prevent this upgrade; use a new output location for a new protocol. Known example/placeholder evidence is rejected rather than converted into annotation labels.
+
 Clone onto the Spark and build the proposed ARM64 GPU container:
 
 ```bash

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt
@@ -10,6 +11,27 @@ from .util import digest
 SCHEMA_VERSION = "1.0"
 VisibilityState = Literal["visible", "partial", "not_visible", "unknown"]
 CueState = Literal["present", "not_observed", "unknown"]
+
+
+class PlaceholderEvidenceError(ValueError):
+    """A known instruction/example was copied instead of describing image evidence."""
+
+
+def model_json_text(text: str) -> str:
+    # Accept only one complete optional JSON fence. Never extract/repair partial JSON,
+    # strip surrounding prose, change frame IDs, or invent missing records.
+    stripped = text.strip()
+    fenced = re.fullmatch(r"```(?:json)?[ \t]*\r?\n(.*?)\r?\n```", stripped, re.DOTALL | re.IGNORECASE)
+    return fenced[1].strip() if fenced else stripped
+
+
+def check_evidence_descriptions(evidence):
+    for item in evidence:
+        normalised = " ".join(item.description.casefold().split()).rstrip(".! ")
+        if normalised == "concrete visible evidence for this target":
+            raise PlaceholderEvidenceError(
+                "Model copied example/placeholder evidence instead of describing the supplied images"
+            )
 
 
 class StrictModel(BaseModel):
@@ -79,6 +101,7 @@ def key(record: FrameRecord | dict) -> str:
 
 def validate_record(value: dict) -> FrameRecord:
     record = FrameRecord.model_validate(value)
+    check_evidence_descriptions(record.evidence)
     if set(record.cues) != set(CUES):
         raise ValueError("A complete explicit cue-state mapping is required")
     if min(record.session, record.window) < 1 or min(record.track, record.source_frame) < 0:
@@ -179,8 +202,7 @@ def missing_record(source: dict) -> dict:
 def expand_response(
     text: str, sources: list[dict], allowed_frames: set[int], locations: dict[int, dict]
 ) -> list[dict]:
-    # JSON only; fenced prose and partial JSON are invalid and handled by one bounded retry.
-    response = ModelResponse.model_validate_json(text)
+    response = ModelResponse.model_validate_json(model_json_text(text))
     expected = {s["source_frame"] for s in sources}
     frames = [f.frame for f in response.frames]
     if len(frames) != len(expected) or set(frames) != expected:
@@ -189,6 +211,7 @@ def expand_response(
     result = []
     for source in sources:
         frame = by_frame[source["source_frame"]]
+        check_evidence_descriptions(frame.evidence)
         present, unknown = set(frame.present), set(frame.unknown)
         if len(present) != len(frame.present) or len(unknown) != len(frame.unknown):
             raise ValueError("Repeated cue code")
@@ -232,5 +255,10 @@ def expand_response(
 
 
 SCHEMA_FINGERPRINT = digest(
-    {"record": FrameRecord.model_json_schema(), "response": ModelResponse.model_json_schema()}
+    {
+        "record": FrameRecord.model_json_schema(),
+        "response": ModelResponse.model_json_schema(),
+        "response_transport_version": "1.1",
+        "evidence_validation_version": "1.1",
+    }
 )

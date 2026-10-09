@@ -139,7 +139,8 @@ class RecoveryTests(unittest.TestCase):
             result = runner.run(self.units)
             self.assertFalse(result["complete"])
             self.assertEqual(result["committed_frames"], 225)
-            self.assertEqual(backend.calls, 2)
+            self.assertGreater(backend.calls, 2)
+            self.assertEqual(result["failed_chunks_this_invocation"], 25)
             self.assertTrue(list((self.run / "audit").glob("*.json")))
             store.close()
 

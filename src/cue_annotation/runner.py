@@ -17,7 +17,13 @@ from .ontology import ONTOLOGY_FINGERPRINT
 from .persistence import RunStore, writer_lock
 from .prompts import PROMPT_FINGERPRINT, messages
 from .qwen_backend import FatalGPUError, QwenBackend, SplitRequired, environment, model_identity
-from .schema import SCHEMA_FINGERPRINT, expand_response, missing_record
+from .schema import (
+    SCHEMA_FINGERPRINT,
+    PlaceholderEvidenceError,
+    expand_response,
+    missing_record,
+    model_json_text,
+)
 from .util import atomic_json, canonical, digest, outside, within
 
 
@@ -171,8 +177,11 @@ class Runner:
                             },
                         )
                         if attempt:
-                            raise ValueError(
-                                "Model output failed validation after one correction retry"
+                            if isinstance(exc, PlaceholderEvidenceError):
+                                raise PlaceholderEvidenceError(str(exc)) from exc
+                            raise SplitRequired(
+                                "Model output failed validation after one correction retry: "
+                                + str(exc)[:1200]
                             ) from exc
                         correction = str(exc)
                     else:
@@ -183,6 +192,9 @@ class Runner:
                                 "type": "accepted_output",
                                 "attempt": attempt + 1,
                                 "raw_response": raw,
+                                "response_normalisation": "single_json_fence_removed"
+                                if model_json_text(raw) != raw.strip()
+                                else "none",
                                 "localisation": locations,
                                 "metrics": getattr(self.backend, "last_metrics", {}),
                             },
@@ -221,6 +233,11 @@ class Runner:
                     self.process(unit, child)
         except FatalGPUError:
             raise
+        except PlaceholderEvidenceError as exc:
+            self.audit(unit, chunk, {"type": "ungrounded_output", "reason": str(exc)})
+            raise RuntimeError(
+                "Repeated placeholder evidence after a correction retry; stopping without accepting invented observations"
+            ) from exc
         except (SourceError, ValueError) as exc:
             self.failures += 1
             self.audit(unit, chunk, {"type": "incomplete", "reason": str(exc)})
